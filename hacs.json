@@ -1,0 +1,9 @@
+{
+  "name": "Fireboard",
+  "render_readme": true,
+  "domains": ["sensor", "binary_sensor"],
+  "homeassistant": "2023.8.0",
+  "iot_class": "cloud_polling",
+  "country": ["US"],
+  "hacs": "1.6.0"
+}
