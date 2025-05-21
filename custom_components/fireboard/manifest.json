@@ -2,14 +2,14 @@
   "domain": "fireboard",
   "name": "Fireboard",
   "config_flow": true,
-  "documentation": "https://github.com/yourusername/ha-fireboard",
-  "issue_tracker": "https://github.com/yourusername/ha-fireboard/issues",
+  "documentation": "https://github.com/mbettersworth/ha-fireboard",
+  "issue_tracker": "https://github.com/mbettersworth/ha-fireboard/issues",
   "requirements": [],
   "ssdp": [],
   "zeroconf": [],
   "homekit": {},
   "dependencies": [],
-  "codeowners": ["@yourusername"],
+  "codeowners": ["@mbettersworth"],
   "iot_class": "cloud_polling",
   "version": "0.1.0"
 }
