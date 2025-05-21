@@ -1,0 +1,109 @@
+/* Custom styles for Fireboard Home Assistant Integration */
+
+/* Temperature tiles */
+.temp-value {
+    font-weight: bold;
+    transition: color 0.3s ease;
+}
+
+/* Chart container */
+.chart-container {
+    background-color: rgba(255, 255, 255, 0.02);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Mini-graph style charts */
+.mini-graph {
+    height: 150px !important;
+    margin-bottom: 1rem;
+    transition: all 0.3s ease;
+}
+
+.mini-graph:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+.mini-graph-card {
+    background: rgba(30, 30, 30, 0.5);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-left: 3px solid var(--bs-primary);
+}
+
+.mini-graph-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.mini-graph-title {
+    font-size: 1rem;
+    font-weight: bold;
+    margin: 0;
+}
+
+.current-temp {
+    font-size: 1.5rem;
+    font-weight: bold;
+}
+
+.temp-label {
+    font-size: 0.875rem;
+    opacity: 0.7;
+}
+
+/* Session cards */
+.session-card {
+    transition: transform 0.2s ease;
+}
+
+.session-card:hover {
+    transform: translateY(-3px);
+}
+
+/* Alert status indicators */
+.alert-status-enabled {
+    color: #198754;
+}
+
+.alert-status-disabled {
+    color: #dc3545;
+}
+
+/* Footer */
+.footer {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    height: 60px;
+    line-height: 60px;
+}
+
+/* Device card */
+.device-card {
+    transition: box-shadow 0.3s ease;
+}
+
+.device-card:hover {
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+/* For better responsiveness on small screens */
+@media (max-width: 767.98px) {
+    .display-5 {
+        font-size: 1.75rem;
+    }
+    
+    .temp-value {
+        font-size: 2rem;
+    }
+    
+    .chart-container {
+        height: 40vh !important;
+    }
+}

@@ -1,0 +1,406 @@
+{% extends "base.html" %}
+
+{% block title %}{{ device.name }} - Fireboard{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h1 class="display-5">
+            <i class="fa-solid fa-fire"></i> {{ device.name }}
+        </h1>
+        <p class="lead">Model: {{ device.model }}</p>
+    </div>
+    <div class="col-auto">
+        <div class="d-flex flex-column gap-2">
+            <a href="{{ url_for('manage_alerts', device_id=device.id) }}" class="btn btn-warning">
+                <i class="fa-solid fa-bell"></i> Manage Alerts
+            </a>
+            {% if active_session %}
+                <a href="{{ url_for('session_detail', session_id=active_session.id) }}" class="btn btn-success">
+                    <i class="fa-solid fa-clock"></i> View Active Session
+                </a>
+            {% else %}
+                <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#startSessionModal">
+                    <i class="fa-solid fa-play"></i> Start Session
+                </button>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="fa-solid fa-temperature-high"></i> Current Temperatures</h5>
+        <button id="refresh-temps" class="btn btn-sm btn-outline-primary">
+            <i class="fa-solid fa-refresh"></i> Refresh
+        </button>
+    </div>
+    <div class="card-body">
+        {% if channels %}
+            <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4" id="temperature-cards">
+                {% for channel in channels %}
+                    <div class="col">
+                        <div class="card h-100 bg-dark">
+                            <div class="card-body text-center">
+                                <h5 class="card-title">{{ channel.name }}</h5>
+                                <div class="display-4 mb-2 temp-value" data-channel-id="{{ channel.id }}">
+                                    {% if channel.current_temp %}
+                                        {{ "%.1f"|format(channel.current_temp) }}{{ channel.units }}
+                                    {% else %}
+                                        --
+                                    {% endif %}
+                                </div>
+                                <p class="card-text text-muted last-updated" data-channel-id="{{ channel.id }}">
+                                    Last updated: {{ channel.last_updated.strftime('%H:%M:%S') }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="alert alert-info">
+                No temperature channels found for this device.
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fa-solid fa-chart-line"></i> Temperature History (24h)</h5>
+    </div>
+    <div class="card-body">
+        <div class="chart-container" style="position: relative; height:50vh; width:100%">
+            <canvas id="temperatureChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Mini-graph cards for each channel -->
+<div class="row mb-4">
+    {% for channel in channels %}
+    <div class="col-md-6 col-lg-4">
+        <div class="mini-graph-card" id="mini-card-{{ channel.id }}">
+            <div class="mini-graph-header">
+                <h5 class="mini-graph-title">{{ channel.name }}</h5>
+                <span class="current-temp" id="mini-temp-{{ channel.id }}">
+                    {% if channel.current_temp %}
+                        {{ "%.1f"|format(channel.current_temp) }}{{ channel.units }}
+                    {% else %}
+                        --
+                    {% endif %}
+                </span>
+            </div>
+            <div class="mini-graph" style="position: relative; width:100%">
+                <canvas id="miniChart{{ channel.id }}"></canvas>
+            </div>
+            <div class="text-end">
+                <small class="temp-label last-updated" data-channel-id="{{ channel.id }}">
+                    Last updated: {{ channel.last_updated.strftime('%H:%M:%S') }}
+                </small>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if recent_sessions %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="fa-solid fa-clock-rotate-left"></i> Recent Sessions</h5>
+        </div>
+        <div class="card-body">
+            <div class="list-group">
+                {% for session in recent_sessions %}
+                    <a href="{{ url_for('session_detail', session_id=session.id) }}" class="list-group-item list-group-item-action">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1">{{ session.title }}</h5>
+                            <small>
+                                {% if session.is_active %}
+                                    <span class="badge bg-success">Active</span>
+                                {% endif %}
+                            </small>
+                        </div>
+                        <p class="mb-1">
+                            Started: {{ session.start_time.strftime('%Y-%m-%d %H:%M') }}
+                            {% if session.end_time %}
+                                <br>Ended: {{ session.end_time.strftime('%Y-%m-%d %H:%M') }}
+                            {% endif %}
+                        </p>
+                    </a>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+{% endif %}
+
+<!-- Start Session Modal -->
+<div class="modal fade" id="startSessionModal" tabindex="-1" aria-labelledby="startSessionModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="startSessionModalLabel">Start New Cooking Session</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="{{ url_for('start_session', device_id=device.id) }}" method="post">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="sessionTitle" class="form-label">Session Title</label>
+                        <input type="text" class="form-control" id="sessionTitle" name="title" 
+                            value="Session {{ now().strftime('%Y-%m-%d %H:%M') }}" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Start Session</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/luxon@2.3.0/build/global/luxon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.0.0/dist/chartjs-adapter-luxon.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Colors for different channels (matches mini-graph-card style)
+    const channelColors = [
+        '#f44336', // Red
+        '#2196f3', // Blue
+        '#4caf50', // Green
+        '#ff9800', // Orange
+        '#9c27b0', // Purple
+        '#00bcd4', // Cyan
+        '#ffeb3b', // Yellow
+        '#795548'  // Brown
+    ];
+    
+    // Load chart data
+    const chartData = {{ chart_data|safe }};
+    
+    // Create the main chart
+    const ctx = document.getElementById('temperatureChart').getContext('2d');
+    const chart = new Chart(ctx, {
+        type: 'line',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.dataset.label || '';
+                            const value = context.parsed.y;
+                            return `${label}: ${value.toFixed(1)}°F`;
+                        }
+                    }
+                }
+            },
+            elements: {
+                point: {
+                    radius: 2,
+                    hoverRadius: 4,
+                    hitRadius: 5
+                },
+                line: {
+                    tension: 0.2 // Slight curve for the line
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit: 'hour',
+                        displayFormats: {
+                            hour: 'MMM d, HH:mm'
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: 'Time'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Temperature (°F)'
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    }
+                }
+            }
+        }
+    });
+    
+    // Create mini charts for each channel
+    const channels = {{ channels|tojson }};
+    channels.forEach((channel, index) => {
+        const colorIndex = index % channelColors.length;
+        const color = channelColors[colorIndex];
+        
+        // Find channel data in the main chart data
+        const channelData = chartData.datasets.find(dataset => 
+            dataset.label === channel.name
+        );
+        
+        if (channelData) {
+            // Create mini chart data with just this channel
+            const miniChartData = {
+                labels: chartData.labels,
+                datasets: [{
+                    data: channelData.data,
+                    borderColor: color,
+                    backgroundColor: color + '33', // Add alpha
+                    borderWidth: 2,
+                    fill: true,
+                    pointRadius: 0,
+                    tension: 0.4
+                }]
+            };
+            
+            // Create mini chart
+            const miniCtx = document.getElementById(`miniChart${channel.id}`).getContext('2d');
+            const miniChart = new Chart(miniCtx, {
+                type: 'line',
+                data: miniChartData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            enabled: true,
+                            callbacks: {
+                                title: function(tooltipItems) {
+                                    const date = new Date(tooltipItems[0].parsed.x);
+                                    return date.toLocaleString();
+                                },
+                                label: function(context) {
+                                    return `${channel.name}: ${context.parsed.y.toFixed(1)}°F`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            display: false
+                        },
+                        y: {
+                            display: false,
+                            beginAtZero: false
+                        }
+                    },
+                    animation: {
+                        duration: 1000
+                    }
+                }
+            });
+            
+            // Store mini chart reference for updates
+            window[`miniChart${channel.id}`] = miniChart;
+        }
+        
+        // Set border color of the mini-graph-card
+        const cardElement = document.getElementById(`mini-card-${channel.id}`);
+        if (cardElement) {
+            cardElement.style.borderLeftColor = color;
+        }
+    });
+    
+    // Refresh temperature data
+    const refreshButton = document.getElementById('refresh-temps');
+    if (refreshButton) {
+        refreshButton.addEventListener('click', function() {
+            refreshTemperatures();
+        });
+    }
+    
+    function refreshTemperatures() {
+        refreshButton.disabled = true;
+        refreshButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...';
+        
+        fetch('{{ url_for("refresh_temps", device_id=device.id) }}')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    data.temps.forEach(temp => {
+                        // Update the main temperature cards
+                        const tempEl = document.querySelector(`.temp-value[data-channel-id="${temp.channel_id}"]`);
+                        const lastUpdatedEl = document.querySelector(`.last-updated[data-channel-id="${temp.channel_id}"]`);
+                        
+                        if (tempEl) {
+                            tempEl.textContent = temp.temp ? `${temp.temp.toFixed(1)}°F` : '--';
+                        }
+                        
+                        if (lastUpdatedEl) {
+                            const date = new Date(temp.last_updated);
+                            lastUpdatedEl.textContent = `Last updated: ${date.toLocaleTimeString()}`;
+                        }
+                        
+                        // Update mini-card temperature display
+                        const miniTempEl = document.getElementById(`mini-temp-${temp.channel_id}`);
+                        if (miniTempEl) {
+                            miniTempEl.textContent = temp.temp ? `${temp.temp.toFixed(1)}°F` : '--';
+                        }
+                    });
+                    
+                    // Also refresh the charts
+                    fetch('{{ url_for("get_device_chart_data", device_id=device.id) }}')
+                        .then(response => response.json())
+                        .then(chartData => {
+                            // Update main chart
+                            chart.data = chartData;
+                            chart.update();
+                            
+                            // Update mini charts
+                            channels.forEach((channel, index) => {
+                                const miniChart = window[`miniChart${channel.id}`];
+                                if (miniChart) {
+                                    const channelData = chartData.datasets.find(dataset => 
+                                        dataset.label === channel.name
+                                    );
+                                    
+                                    if (channelData) {
+                                        miniChart.data.labels = chartData.labels;
+                                        miniChart.data.datasets[0].data = channelData.data;
+                                        miniChart.update();
+                                    }
+                                }
+                            });
+                        });
+                } else {
+                    console.error('Error refreshing temperatures:', data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            })
+            .finally(() => {
+                refreshButton.disabled = false;
+                refreshButton.innerHTML = '<i class="fa-solid fa-refresh"></i> Refresh';
+            });
+    }
+    
+    // Auto-refresh temperatures every minute
+    setInterval(refreshTemperatures, 60000);
+});
+</script>
+{% endblock %}

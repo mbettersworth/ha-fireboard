@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+
+{% block title %}{{ session.title }} - Fireboard{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h1 class="display-5">
+            <i class="fa-solid fa-clock"></i> {{ session.title }}
+        </h1>
+        <p class="lead">
+            <a href="{{ url_for('device_detail', device_id=device.id) }}">{{ device.name }}</a>
+            {% if session.is_active %}
+                <span class="badge bg-success">Active</span>
+            {% endif %}
+        </p>
+    </div>
+    <div class="col-auto">
+        {% if session.is_active %}
+            <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#endSessionModal">
+                <i class="fa-solid fa-stop"></i> End Session
+            </button>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fa-solid fa-info-circle"></i> Session Details</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Started:</strong> {{ session.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+                {% if session.end_time %}
+                    <p><strong>Ended:</strong> {{ session.end_time.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+                    <p><strong>Duration:</strong> {{ (session.end_time - session.start_time)|string }}</p>
+                {% else %}
+                    <p><strong>Duration so far:</strong> {{ (now() - session.start_time)|string }}</p>
+                {% endif %}
+            </div>
+            <div class="col-md-6">
+                <p><strong>Channels:</strong></p>
+                <ul>
+                    {% for channel in channels %}
+                        <li>{{ channel.name }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        
+        {% if session.notes %}
+            <div class="mt-3">
+                <p><strong>Notes:</strong></p>
+                <p>{{ session.notes|nl2br }}</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fa-solid fa-chart-line"></i> Temperature Chart</h5>
+    </div>
+    <div class="card-body">
+        <div class="chart-container" style="position: relative; height:60vh; width:100%">
+            <canvas id="sessionChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Mini-graph cards for each channel -->
+<div class="row mb-4">
+    {% for channel in channels %}
+    <div class="col-md-6 col-lg-4">
+        <div class="mini-graph-card" id="mini-card-{{ channel.id }}">
+            <div class="mini-graph-header">
+                <h5 class="mini-graph-title">{{ channel.name }}</h5>
+                <span class="current-temp" id="mini-temp-{{ channel.id }}">
+                    {% if channel.current_temp %}
+                        {{ "%.1f"|format(channel.current_temp) }}{{ channel.units }}
+                    {% else %}
+                        --
+                    {% endif %}
+                </span>
+            </div>
+            <div class="mini-graph" style="position: relative; width:100%">
+                <canvas id="miniChart{{ channel.id }}"></canvas>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- End Session Modal -->
+{% if session.is_active %}
+<div class="modal fade" id="endSessionModal" tabindex="-1" aria-labelledby="endSessionModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="endSessionModalLabel">End Session</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="{{ url_for('end_session', session_id=session.id) }}" method="post">
+                <div class="modal-body">
+                    <p>Are you sure you want to end this session?</p>
+                    <div class="mb-3">
+                        <label for="sessionNotes" class="form-label">Session Notes (optional)</label>
+                        <textarea class="form-control" id="sessionNotes" name="notes" rows="4"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">End Session</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/luxon@2.3.0/build/global/luxon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.0.0/dist/chartjs-adapter-luxon.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Define colors for different channels (matches mini-graph-card style)
+    const channelColors = [
+        '#f44336', // Red
+        '#2196f3', // Blue
+        '#4caf50', // Green
+        '#ff9800', // Orange
+        '#9c27b0', // Purple
+        '#00bcd4', // Cyan
+        '#ffeb3b', // Yellow
+        '#795548'  // Brown
+    ];
+    
+    // Load chart data
+    const chartData = {{ chart_data|safe }};
+    
+    // Create the main chart
+    const ctx = document.getElementById('sessionChart').getContext('2d');
+    const chart = new Chart(ctx, {
+        type: 'line',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.dataset.label || '';
+                            const value = context.parsed.y;
+                            return `${label}: ${value.toFixed(1)}°F`;
+                        }
+                    }
+                }
+            },
+            elements: {
+                point: {
+                    radius: 2,
+                    hoverRadius: 4,
+                    hitRadius: 5
+                },
+                line: {
+                    tension: 0.2 // Slight curve for the line
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit: 'minute',
+                        displayFormats: {
+                            minute: 'MMM d, HH:mm'
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: 'Time'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Temperature (°F)'
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    }
+                }
+            }
+        }
+    });
+    
+    // Create mini charts for each channel
+    const channels = {{ channels|tojson }};
+    channels.forEach((channel, index) => {
+        const colorIndex = index % channelColors.length;
+        const color = channelColors[colorIndex];
+        
+        // Find channel data in the main chart data
+        const channelData = chartData.datasets.find(dataset => 
+            dataset.label === channel.name
+        );
+        
+        if (channelData) {
+            // Create mini chart data with just this channel
+            const miniChartData = {
+                labels: chartData.labels,
+                datasets: [{
+                    data: channelData.data,
+                    borderColor: color,
+                    backgroundColor: color + '33', // Add alpha
+                    borderWidth: 2,
+                    fill: true,
+                    pointRadius: 0,
+                    tension: 0.4
+                }]
+            };
+            
+            // Create mini chart
+            const miniCtx = document.getElementById(`miniChart${channel.id}`).getContext('2d');
+            const miniChart = new Chart(miniCtx, {
+                type: 'line',
+                data: miniChartData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            enabled: true,
+                            callbacks: {
+                                title: function(tooltipItems) {
+                                    const date = new Date(tooltipItems[0].parsed.x);
+                                    return date.toLocaleString();
+                                },
+                                label: function(context) {
+                                    return `${channel.name}: ${context.parsed.y.toFixed(1)}°F`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            display: false
+                        },
+                        y: {
+                            display: false,
+                            beginAtZero: false
+                        }
+                    },
+                    animation: {
+                        duration: 1000
+                    }
+                }
+            });
+            
+            // Store mini chart reference for updates
+            window[`miniChart${channel.id}`] = miniChart;
+            
+            // Set border color of the mini-graph-card
+            const cardElement = document.getElementById(`mini-card-${channel.id}`);
+            if (cardElement) {
+                cardElement.style.borderLeftColor = color;
+            }
+        }
+    });
+    
+    // For active sessions, refresh chart data every minute
+    {% if session.is_active %}
+    setInterval(function() {
+        fetch('{{ url_for("get_chart_data", session_id=session.id) }}')
+            .then(response => response.json())
+            .then(data => {
+                // Update main chart
+                chart.data = data;
+                chart.update();
+                
+                // Update mini charts
+                channels.forEach((channel, index) => {
+                    const miniChart = window[`miniChart${channel.id}`];
+                    if (miniChart) {
+                        const channelData = data.datasets.find(dataset => 
+                            dataset.label === channel.name
+                        );
+                        
+                        if (channelData) {
+                            miniChart.data.labels = data.labels;
+                            miniChart.data.datasets[0].data = channelData.data;
+                            miniChart.update();
+                        }
+                    }
+                });
+            })
+            .catch(error => console.error('Error refreshing chart data:', error));
+    }, 60000);
+    {% endif %}
+});
+</script>
+{% endblock %}
