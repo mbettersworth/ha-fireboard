@@ -1,6 +1,7 @@
 """The Fireboard integration."""
 import asyncio
 import logging
+import json
 from datetime import timedelta
 
 import voluptuous as vol
@@ -42,30 +43,72 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     api = FireboardApiClient(hass, username=username, password=password, session=session)
     
     # Authenticate with the Fireboard API
-    if not await api.authenticate():
+    authentication_success = await api.authenticate()
+    if not authentication_success:
         _LOGGER.error("Failed to authenticate with Fireboard API")
-        return False
-
+        # Continue anyway to show diagnostics, but log the error
+        
     async def async_update_data():
         """Fetch data from API."""
+        data = {
+            "profile": None,
+            "devices": [],
+            "working_endpoints": {}
+        }
+        
         try:
             # First get the user profile, as it contains important data
+            _LOGGER.debug("Updating data: fetching user profile")
             profile = await api.get_user_profile()
-            if not profile:
-                _LOGGER.warning("Could not retrieve user profile")
-                return None
-                
-            # Then try to get device data
-            devices = await api.get_devices()
             
-            # Combine user profile and device data
-            return {
-                "profile": profile,
-                "devices": devices or []
-            }
+            if profile:
+                _LOGGER.debug(f"User profile retrieved: {json.dumps(profile)[:100]}...")
+                data["profile"] = profile
+                
+                # Look for devices in the profile if available
+                if "userprofile" in profile and "devices" in profile["userprofile"]:
+                    devices = profile["userprofile"]["devices"]
+                    if devices:
+                        _LOGGER.info(f"Found {len(devices)} devices in user profile")
+                        data["devices"] = devices
+            else:
+                _LOGGER.warning("Could not retrieve user profile")
+                data["error"] = "Unable to retrieve user profile"
+            
+            # Discover working API endpoints
+            _LOGGER.debug("Discovering working API endpoints")
+            working_endpoints = await api._discover_working_api_endpoints()
+            data["working_endpoints"] = working_endpoints
+            
+            # Only try to get devices if we don't already have them from the profile
+            if not data["devices"]:
+                _LOGGER.debug("Updating data: fetching devices")
+                devices = await api.get_devices()
+                
+                if devices:
+                    _LOGGER.info(f"Retrieved {len(devices)} devices")
+                    data["devices"] = devices
+                else:
+                    _LOGGER.warning("No devices found in API response")
+                    data["error"] = "No devices found"
+            
+            # Add extra diagnostics
+            data["api_status"] = "connected" if profile and data["devices"] else "limited"
+            
+            return data
         except Exception as e:
             _LOGGER.error(f"Error updating Fireboard data: {e}")
-            return None
+            # Return partial data if available
+            if "profile" in data and data["profile"]:
+                _LOGGER.info("Returning partial data (profile only) due to error")
+                data["error"] = str(e)
+                return data
+            else:
+                return {
+                    "profile": None, 
+                    "devices": [], 
+                    "error": str(e)
+                }
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -78,11 +121,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Fetch initial data
     await coordinator.async_refresh()
     
-    # Verify that we could get some data
-    if coordinator.data is None:
-        _LOGGER.error("Unable to fetch data from Fireboard API")
-        return False
-
+    # Always proceed, even if we couldn't get all data - we'll show diagnostics
     hass.data[DOMAIN][entry.entry_id] = {
         COORDINATOR: coordinator,
         API: api,
@@ -93,6 +132,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.async_create_task(
             hass.config_entries.async_forward_entry_setup(entry, platform)
         )
+
+    # Log success or partial success
+    if coordinator.data and coordinator.data.get("profile"):
+        if coordinator.data.get("devices"):
+            _LOGGER.info("Fireboard integration set up successfully with devices")
+        else:
+            _LOGGER.warning("Fireboard integration set up with profile but no devices")
+    else:
+        _LOGGER.warning("Fireboard integration set up with limited functionality")
 
     return True
 
