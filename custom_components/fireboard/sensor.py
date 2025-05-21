@@ -6,8 +6,7 @@ import json
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    TEMP_FAHRENHEIT,
-    TEMP_CELSIUS,
+    UnitOfTemperature,
     DEVICE_CLASS_TEMPERATURE,
 )
 from homeassistant.core import HomeAssistant
@@ -452,7 +451,7 @@ class FireboardTemperatureSensor(CoordinatorEntity, SensorEntity):
         self._channel_name = channel_name
         self._channel_number = channel_number
         self._state = None
-        self._unit = TEMP_FAHRENHEIT
+        self._unit = UnitOfTemperature.FAHRENHEIT
         self._attr_unique_id = f"{DOMAIN}_{device_id}_channel_{channel_id}"
         self._attr_name = f"{device_name} {channel_name}"
         self._attr_device_class = DEVICE_CLASS_TEMPERATURE
@@ -509,9 +508,9 @@ class FireboardTemperatureSensor(CoordinatorEntity, SensorEntity):
                         if str(channel.get("id")) == str(self._channel_id):
                             unit = channel.get("unit", "").upper()
                             if "F" in unit:
-                                self._unit = TEMP_FAHRENHEIT
+                                self._unit = UnitOfTemperature.FAHRENHEIT
                             elif "C" in unit:
-                                self._unit = TEMP_CELSIUS
+                                self._unit = UnitOfTemperature.CELSIUS
         return self._unit
 
     @property
