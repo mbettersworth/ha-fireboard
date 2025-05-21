@@ -1,14 +1,15 @@
 {
   "domain": "fireboard",
   "name": "Fireboard",
-  "codeowners": ["@mbettersworth"],
   "config_flow": true,
-  "dependencies": [],
   "documentation": "https://github.com/mbettersworth/ha-fireboard",
-  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/mbettersworth/ha-fireboard/issues",
-  "requirements": ["requests>=2.25.0", "aiohttp>=3.8.1"],
-  "version": "1.0.0",
-  "integration_type": "device",
-  "quality_scale": "silver"
+  "requirements": ["email-validator==2.1.0"],
+  "ssdp": [],
+  "zeroconf": [],
+  "homekit": {},
+  "dependencies": [],
+  "codeowners": ["@mbettersworth"],
+  "iot_class": "cloud_polling",
+  "version": "1.0.0"
 }

@@ -1,231 +1,234 @@
 """API client for Fireboard integration."""
 import logging
-from typing import Dict, List, Optional, Any
-
 import aiohttp
-
-from .const import (
-    CONF_API_KEY,
-    CONF_USERNAME,
-    CONF_PASSWORD,
-)
+import asyncio
+import async_timeout
+from typing import Optional, Dict, List, Any
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class FireboardApiClient:
-    """API client for Fireboard."""
+    """API client for Fireboard integration."""
 
     def __init__(
         self, 
-        session: aiohttp.ClientSession, 
-        api_url: str, 
-        api_key: Optional[str] = None,
+        hass, 
         username: Optional[str] = None,
-        password: Optional[str] = None
+        password: Optional[str] = None,
+        session: Optional[aiohttp.ClientSession] = None
     ):
-        """Initialize the API client."""
-        self._session = session
-        self.api_url = api_url.rstrip("/")
-        self.api_key = api_key
+        """Initialize the API client.
+        
+        Args:
+            hass: Home Assistant instance
+            username: Fireboard username (email)
+            password: Fireboard password
+            session: Optional existing aiohttp ClientSession
+        """
+        self.hass = hass
         self.username = username
         self.password = password
+        self.api_url = "https://fireboard.io/api"
         self.token = None
-        self.headers = {"Content-Type": "application/json"}
-        
-        # Set API key in headers if provided
-        if self.api_key:
-            self.headers["X-API-KEY"] = self.api_key
+        self.session = session
+        self.headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
 
-    async def _authenticate(self) -> bool:
-        """Authenticate with username and password."""
+    async def _get_session(self):
+        """Get an aiohttp ClientSession."""
+        if self.session is None:
+            self.session = aiohttp.ClientSession()
+        return self.session
+
+    async def authenticate(self) -> bool:
+        """Authenticate with the Fireboard API."""
         if not self.username or not self.password:
+            _LOGGER.error("Username and password are required for authentication")
             return False
 
+        session = await self._get_session()
         auth_url = f"{self.api_url}/rest-auth/login/"
+        
         try:
-            async with self._session.post(
-                auth_url,
-                json={"username": self.username, "password": self.password},
-                headers=self.headers,
-            ) as response:
-                if response.status != 200:
-                    _LOGGER.error(
-                        "Authentication failed: %s", await response.text()
-                    )
+            with async_timeout.timeout(10):
+                response = await session.post(
+                    auth_url,
+                    json={"username": self.username, "password": self.password},
+                    headers=self.headers
+                )
+                response.raise_for_status()
+                data = await response.json()
+                
+                if "key" in data:
+                    self.token = data["key"]
+                    self.headers["Authorization"] = f"Token {self.token}"
+                    _LOGGER.info("Successfully authenticated with Fireboard API")
+                    return True
+                else:
+                    _LOGGER.error("Authentication succeeded but no token in response")
                     return False
                     
-                data = await response.json()
-                self.token = data.get("key")  # Updated to use "key" instead of "token"
-                if self.token:
-                    self.headers["Authorization"] = f"Token {self.token}"
-                    return True
-                return False
-        except (aiohttp.ClientError, aiohttp.ClientResponseError) as err:
-            _LOGGER.error("Error authenticating to Fireboard API: %s", err)
-            return False
+        except aiohttp.ClientError as err:
+            _LOGGER.error(f"Error authenticating with Fireboard API: {err}")
+        except asyncio.TimeoutError:
+            _LOGGER.error("Timeout during authentication with Fireboard API")
+        except Exception as ex:
+            _LOGGER.error(f"Unexpected error during authentication: {ex}")
+        
+        return False
 
     async def _api_request(
         self, 
         endpoint: str, 
         method: str = "GET", 
-        params: Optional[Dict] = None,
+        params: Optional[Dict] = None, 
         data: Optional[Dict] = None
     ) -> Optional[Dict]:
         """Make a request to the Fireboard API."""
+        # Ensure we're authenticated
+        if not self.token and not await self.authenticate():
+            _LOGGER.error("Authentication required for API requests")
+            return None
+            
+        session = await self._get_session()
         url = f"{self.api_url}/{endpoint.lstrip('/')}"
         
-        # Authenticate if needed and no API key
-        if not self.api_key and not self.token:
-            if not await self._authenticate():
-                _LOGGER.error("Authentication required but failed")
-                return None
-
-        for _ in range(2):  # Try twice (second attempt after re-auth)
-            try:
+        try:
+            with async_timeout.timeout(10):
                 if method == "GET":
-                    async with self._session.get(
-                        url, headers=self.headers, params=params
-                    ) as response:
-                        if response.status == 401 and self.username and self.password:
-                            # Token expired, try to re-authenticate
-                            if await self._authenticate():
-                                continue  # Retry the request
-                            return None
-                            
-                        response.raise_for_status()
-                        return await response.json()
-                        
+                    response = await session.get(url, headers=self.headers, params=params)
                 elif method == "POST":
-                    async with self._session.post(
-                        url, headers=self.headers, json=data
-                    ) as response:
-                        if response.status == 401 and self.username and self.password:
-                            # Token expired, try to re-authenticate
-                            if await self._authenticate():
-                                continue  # Retry the request
-                            return None
-                            
-                        response.raise_for_status()
-                        return await response.json()
-                        
+                    response = await session.post(url, headers=self.headers, json=data)
                 elif method == "PUT":
-                    async with self._session.put(
-                        url, headers=self.headers, json=data
-                    ) as response:
-                        if response.status == 401 and self.username and self.password:
-                            # Token expired, try to re-authenticate
-                            if await self._authenticate():
-                                continue  # Retry the request
-                            return None
-                            
-                        response.raise_for_status()
-                        return await response.json()
-                        
+                    response = await session.put(url, headers=self.headers, json=data)
                 elif method == "DELETE":
-                    async with self._session.delete(
-                        url, headers=self.headers
-                    ) as response:
-                        if response.status == 401 and self.username and self.password:
-                            # Token expired, try to re-authenticate
-                            if await self._authenticate():
-                                continue  # Retry the request
-                            return None
-                            
-                        response.raise_for_status()
-                        if response.status == 204:  # No content
-                            return {}
-                        return await response.json()
-                
-            except aiohttp.ClientResponseError as err:
-                _LOGGER.error("API request error: %s, URL: %s", err, url)
-                return None
-            except aiohttp.ClientError as err:
-                _LOGGER.error("Request error: %s, URL: %s", err, url)
-                return None
-            
-            # If we got here, the request was successful
-            break
-            
-        return None  # Request failed after retry
+                    response = await session.delete(url, headers=self.headers)
+                else:
+                    _LOGGER.error(f"Unsupported method: {method}")
+                    return None
 
-    async def async_get_devices(self) -> Optional[List[Dict[str, Any]]]:
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientError as err:
+            _LOGGER.error(f"Error requesting data from {url}: {err}")
+        except asyncio.TimeoutError:
+            _LOGGER.error(f"Timeout calling {url}")
+        except Exception as ex:
+            _LOGGER.error(f"Unexpected error during API request: {ex}")
+        
+        return None
+        
+    async def get_user_profile(self) -> Optional[Dict[str, Any]]:
+        """Get the current user's profile."""
+        return await self._api_request("rest-auth/user/")
+        
+    async def get_devices(self) -> Optional[List[Dict[str, Any]]]:
         """Get all Fireboard devices."""
-        return await self._api_request("v1/devices/")
+        # First try to get devices from the user profile
+        profile = await self.get_user_profile()
+        if profile and "userprofile" in profile:
+            # Check if devices are in the user profile
+            devices = profile.get("userprofile", {}).get("devices", [])
+            if devices:
+                return devices
+        
+        # Try different possible endpoints
+        endpoints = [
+            "devices",
+            "v1/devices",
+            "drive/devices"
+        ]
+        
+        for endpoint in endpoints:
+            result = await self._api_request(endpoint)
+            if result is not None:
+                _LOGGER.info(f"Found devices using endpoint: {endpoint}")
+                return result
+        
+        return []
 
-    async def async_get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific device."""
-        return await self._api_request(f"v1/devices/{device_id}/")
+    async def get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific Fireboard device."""
+        # Try different possible endpoints
+        endpoints = [
+            f"v1/devices/{device_id}",
+            f"devices/{device_id}",
+            f"drive/devices/{device_id}"
+        ]
+        
+        for endpoint in endpoints:
+            result = await self._api_request(endpoint)
+            if result is not None:
+                return result
+        
+        return None
 
-    async def async_get_temps(self, device_id: str) -> Optional[List[Dict[str, Any]]]:
+    async def get_temperatures(self, device_id: str) -> Optional[List[Dict[str, Any]]]:
         """Get temperatures for a device."""
-        return await self._api_request(f"v1/devices/{device_id}/temps/")
+        # Try different possible endpoints
+        endpoints = [
+            f"v1/devices/{device_id}/temps",
+            f"devices/{device_id}/temps",
+            f"drive/devices/{device_id}/temps"
+        ]
+        
+        for endpoint in endpoints:
+            result = await self._api_request(endpoint)
+            if result is not None:
+                return result
+        
+        return None
 
-    async def async_get_alerts(self, device_id: str) -> Optional[List[Dict[str, Any]]]:
+    async def get_alerts(self, device_id: str) -> Optional[List[Dict[str, Any]]]:
         """Get alerts for a device."""
-        return await self._api_request(f"v1/devices/{device_id}/alerts/")
+        # Try different possible endpoints
+        endpoints = [
+            f"v1/devices/{device_id}/alerts",
+            f"devices/{device_id}/alerts",
+            f"drive/devices/{device_id}/alerts"
+        ]
+        
+        for endpoint in endpoints:
+            result = await self._api_request(endpoint)
+            if result is not None:
+                return result
+        
+        return None
 
-    async def async_create_alert(
+    async def create_alert(
         self, 
         device_id: str, 
         channel_id: str, 
         min_temp: Optional[float] = None, 
         max_temp: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
-        """Create a new temperature alert."""
-        data = {"device": device_id, "channel": channel_id}
+        """Create a new alert."""
+        data = {
+            "device": device_id,
+            "channel": channel_id
+        }
         
         if min_temp is not None:
             data["min"] = min_temp
         if max_temp is not None:
             data["max"] = max_temp
-            
-        return await self._api_request("v1/alerts/", method="POST", data=data)
-
-    async def async_update_alert(
-        self,
-        alert_id: str,
-        min_temp: Optional[float] = None,
-        max_temp: Optional[float] = None,
-        enabled: Optional[bool] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Update an existing alert."""
-        data = {}
         
-        if min_temp is not None:
-            data["min"] = min_temp
-        if max_temp is not None:
-            data["max"] = max_temp
-        if enabled is not None:
-            data["enabled"] = enabled
-            
-        return await self._api_request(f"v1/alerts/{alert_id}/", method="PUT", data=data)
+        # Try different possible endpoints
+        endpoints = [
+            "v1/alerts",
+            "alerts",
+            "drive/alerts"
+        ]
+        
+        for endpoint in endpoints:
+            result = await self._api_request(endpoint, method="POST", data=data)
+            if result is not None:
+                return result
+        
+        return None
 
-    async def async_delete_alert(self, alert_id: str) -> bool:
+    async def delete_alert(self, alert_id):
         """Delete an alert."""
-        result = await self._api_request(f"v1/alerts/{alert_id}/", method="DELETE")
-        return result is not None
-
-    async def async_get_sessions(
-        self, 
-        device_id: Optional[str] = None, 
-        limit: int = 10
-    ) -> Optional[List[Dict[str, Any]]]:
-        """Get recent cooking sessions."""
-        params = {"limit": limit}
-        
-        if device_id:
-            return await self._api_request(f"v1/devices/{device_id}/sessions/", params=params)
-        else:
-            return await self._api_request("v1/sessions/", params=params)
-
-    async def async_get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific session."""
-        return await self._api_request(f"v1/sessions/{session_id}/")
-
-    async def async_get_session_temps(
-        self, 
-        session_id: str
-    ) -> Optional[List[Dict[str, Any]]]:
-        """Get temperature readings for a session."""
-        return await self._api_request(f"v1/sessions/{session_id}/temps/")
+        return await self._api_request(f"alerts/{alert_id}", method="DELETE")

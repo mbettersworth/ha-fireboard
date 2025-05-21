@@ -4,122 +4,97 @@ import logging
 from datetime import timedelta
 
 import voluptuous as vol
+import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     DOMAIN,
-    SCAN_INTERVAL,
-    CONF_API_KEY,
-    CONF_USERNAME,
-    CONF_PASSWORD,
-    CONF_API_URL,
     COORDINATOR,
-    API
+    API,
+    DEFAULT_SCAN_INTERVAL
 )
 from .api import FireboardApiClient
-from .service import async_setup_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
+
+# Remove the manual configuration schema as we're using config entries
+CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
 
 PLATFORMS = ["sensor"]
 
 
-async def async_setup(hass: HomeAssistant, config):
+async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Fireboard component."""
-    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN] = {}
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Fireboard from a config entry."""
-    # Get configuration from the entry
-    api_key = entry.data.get(CONF_API_KEY)
-    username = entry.data.get(CONF_USERNAME)
-    password = entry.data.get(CONF_PASSWORD)
-    api_url = entry.data.get(CONF_API_URL, "https://fireboard.io/api")
+    username = entry.data["username"]
+    password = entry.data["password"]
+    scan_interval = entry.options.get("scan_interval", DEFAULT_SCAN_INTERVAL)
 
-    # Create API client
     session = async_get_clientsession(hass)
-    api = FireboardApiClient(session, api_url, api_key, username, password)
-
-    # Verify API connection
-    devices = await api.async_get_devices()
-    if devices is None:
-        _LOGGER.error("Failed to connect to Fireboard API")
+    api = FireboardApiClient(hass, username=username, password=password, session=session)
+    
+    # Authenticate with the Fireboard API
+    if not await api.authenticate():
+        _LOGGER.error("Failed to authenticate with Fireboard API")
         return False
 
-    # Create update coordinator
     async def async_update_data():
         """Fetch data from API."""
         try:
-            # Get all devices
-            devices = await api.async_get_devices()
-            
-            if not devices:
-                return {}
+            # First get the user profile, as it contains important data
+            profile = await api.get_user_profile()
+            if not profile:
+                _LOGGER.warning("Could not retrieve user profile")
+                return None
                 
-            # Get latest temperature data for each device
-            for device in devices:
-                device_id = device.get("id")
-                temps = await api.async_get_temps(device_id)
-                if temps:
-                    device["temps"] = temps
-                else:
-                    device["temps"] = []
-                    
-                # Get alert configuration
-                alerts = await api.async_get_alerts(device_id)
-                if alerts:
-                    device["alerts"] = alerts
-                else:
-                    device["alerts"] = []
-                    
-            return devices
-        except Exception as err:
-            _LOGGER.error("Error updating Fireboard data: %s", err)
-            raise
+            # Then try to get device data
+            devices = await api.get_devices()
+            
+            # Combine user profile and device data
+            return {
+                "profile": profile,
+                "devices": devices or []
+            }
+        except Exception as e:
+            _LOGGER.error(f"Error updating Fireboard data: {e}")
+            return None
 
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name=DOMAIN,
         update_method=async_update_data,
-        update_interval=timedelta(seconds=SCAN_INTERVAL),
+        update_interval=timedelta(seconds=scan_interval),
     )
 
     # Fetch initial data
-    await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_refresh()
+    
+    # Verify that we could get some data
+    if coordinator.data is None:
+        _LOGGER.error("Unable to fetch data from Fireboard API")
+        return False
 
-    # Store API client and coordinator in HASS data
     hass.data[DOMAIN][entry.entry_id] = {
         COORDINATOR: coordinator,
         API: api,
     }
 
-    # Set up platforms
+    # Set up all sensor platforms
     for platform in PLATFORMS:
         hass.async_create_task(
             hass.config_entries.async_forward_entry_setup(entry, platform)
         )
-    
-    # Set up services
-    if len(hass.data[DOMAIN]) == 1:
-        await async_setup_services(hass)
-
-    # Register entity services when config entry is loaded
-    entry.async_on_unload(
-        entry.add_update_listener(async_update_listener)
-    )
 
     return True
-
-
-async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
-    """Handle options update."""
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -132,12 +107,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
             ]
         )
     )
-    
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
-        
-        # Unregister services when the last entry is unloaded
-        if not hass.data[DOMAIN]:
-            await async_unregister_services(hass)
 
     return unload_ok

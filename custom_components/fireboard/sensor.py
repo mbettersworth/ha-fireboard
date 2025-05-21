@@ -1,31 +1,21 @@
 """Sensor platform for Fireboard integration."""
 import logging
-from typing import Any, Dict, List, Optional
+from datetime import datetime
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import TEMP_FAHRENHEIT
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.const import (
+    TEMP_FAHRENHEIT,
+    TEMP_CELSIUS,
+    DEVICE_CLASS_TEMPERATURE,
+)
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
-    DataUpdateCoordinator,
 )
 
-from .const import (
-    DOMAIN,
-    COORDINATOR,
-    API,
-    ATTR_CHANNEL,
-    ATTR_DEVICE_ID,
-    ATTR_LAST_UPDATED,
-    ATTR_FIRMWARE_VERSION,
-)
+from .const import DOMAIN, COORDINATOR, API
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,113 +29,236 @@ async def async_setup_entry(
 
     entities = []
 
+    # Only add entities if we have data
     if coordinator.data:
-        for device in coordinator.data:
-            device_id = device.get("id")
-            device_name = device.get("title", f"Fireboard {device_id}")
-            model = device.get("hw_ver", "Fireboard 2")
+        # Add user profile sensor
+        if "profile" in coordinator.data:
+            profile = coordinator.data["profile"]
+            user_id = profile.get("id")
+            username = profile.get("username")
             
-            # Add temperature sensors for each channel
-            for channel in device.get("channels", []):
-                channel_id = channel.get("id")
-                channel_name = channel.get("title", f"Channel {channel.get('channel')}")
-                channel_number = channel.get("channel")
+            if user_id and username:
+                entities.append(FireboardProfileSensor(coordinator, api, user_id, username))
+        
+        # Add device sensors
+        devices = coordinator.data.get("devices", [])
+        if devices:
+            for device in devices:
+                device_id = device.get("id")
+                device_name = device.get("title", f"Fireboard {device_id}")
                 
+                # Add device info sensor
+                entities.append(FireboardDeviceSensor(coordinator, api, device_id, device_name))
+                
+                # Add sensors for each channel
+                for channel in device.get("channels", []):
+                    channel_id = channel.get("id")
+                    channel_name = channel.get("title", f"Channel {channel.get('channel')}")
+                    channel_number = channel.get("channel")
+                    
+                    entities.append(
+                        FireboardTemperatureSensor(
+                            coordinator, 
+                            api, 
+                            device_id, 
+                            device_name,
+                            channel_id,
+                            channel_name,
+                            channel_number
+                        )
+                    )
+        else:
+            # If no devices were found, add a placeholder sensor based on user profile
+            profile = coordinator.data.get("profile", {})
+            user_id = profile.get("id")
+            username = profile.get("username", "Unknown")
+            
+            if user_id:
+                _LOGGER.warning(f"No devices found for user {username}, creating placeholder sensor")
                 entities.append(
-                    FireboardTemperatureSensor(
-                        coordinator,
-                        api,
-                        entry.entry_id,
-                        device_id,
-                        device_name,
-                        model,
-                        channel_id,
-                        channel_name,
-                        channel_number,
+                    FireboardDeviceSensor(
+                        coordinator, 
+                        api, 
+                        f"placeholder_{user_id}", 
+                        f"Fireboard {username}"
                     )
                 )
-    
+
     async_add_entities(entities)
+
+
+class FireboardProfileSensor(CoordinatorEntity, SensorEntity):
+    """Representation of a Fireboard user profile sensor."""
+
+    def __init__(self, coordinator, api, user_id, username):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._api = api
+        self._user_id = user_id
+        self._username = username
+        self._state = "connected"
+        self._attr_unique_id = f"{DOMAIN}_user_{user_id}"
+        self._attr_name = f"Fireboard User {username}"
+        self._attributes = {
+            "user_id": user_id,
+            "username": username,
+            "last_updated": datetime.now().isoformat(),
+        }
+
+    @property
+    def name(self):
+        """Return the name of the sensor."""
+        return self._attr_name
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes."""
+        # Update attributes from coordinator data
+        if self.coordinator.data and "profile" in self.coordinator.data:
+            profile = self.coordinator.data["profile"]
+            
+            # Add user profile information
+            if "userprofile" in profile:
+                user_profile = profile["userprofile"]
+                for key, value in user_profile.items():
+                    # Don't include complex nested objects
+                    if isinstance(value, (str, int, float, bool)):
+                        self._attributes[key] = value
+            
+            # Add basic user information
+            for key in ["email", "first_name", "last_name"]:
+                if key in profile:
+                    self._attributes[key] = profile[key]
+                    
+            # Update last updated timestamp
+            self._attributes["last_updated"] = datetime.now().isoformat()
+            
+        return self._attributes
+
+    async def async_update(self):
+        """Update the sensor."""
+        await self.coordinator.async_request_refresh()
+
+
+class FireboardDeviceSensor(CoordinatorEntity, SensorEntity):
+    """Representation of a Fireboard device sensor."""
+
+    def __init__(self, coordinator, api, device_id, device_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._api = api
+        self._device_id = device_id
+        self._device_name = device_name
+        self._state = "connected"
+        self._attr_unique_id = f"{DOMAIN}_{device_id}_info"
+        self._attr_name = f"{device_name} Info"
+        self._attributes = {
+            "device_id": device_id,
+            "device_name": device_name,
+            "last_updated": datetime.now().isoformat(),
+        }
+
+    @property
+    def name(self):
+        """Return the name of the sensor."""
+        return self._attr_name
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes."""
+        # Try to update device attributes from coordinator data
+        if self.coordinator.data and "devices" in self.coordinator.data:
+            devices = self.coordinator.data["devices"]
+            for device in devices:
+                if str(device.get("id")) == str(self._device_id):
+                    # Add device properties as attributes
+                    for key, value in device.items():
+                        if isinstance(value, (str, int, float, bool)):
+                            self._attributes[key] = value
+                    
+                    # Update last updated timestamp
+                    self._attributes["last_updated"] = datetime.now().isoformat()
+                    break
+                    
+        return self._attributes
+
+    async def async_update(self):
+        """Update the sensor."""
+        await self.coordinator.async_request_refresh()
 
 
 class FireboardTemperatureSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Fireboard temperature sensor."""
 
-    def __init__(
-        self,
-        coordinator: DataUpdateCoordinator,
-        api,
-        config_entry_id: str,
-        device_id: str,
-        device_name: str,
-        model: str,
-        channel_id: str,
-        channel_name: str,
-        channel_number: int,
-    ) -> None:
+    def __init__(self, coordinator, api, device_id, device_name, channel_id, channel_name, channel_number):
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._api = api
-        self._config_entry_id = config_entry_id
         self._device_id = device_id
         self._device_name = device_name
-        self._model = model
         self._channel_id = channel_id
         self._channel_name = channel_name
         self._channel_number = channel_number
-        
-        # Set sensor properties
-        self._attr_name = f"{device_name} {channel_name}"
+        self._state = None
+        self._unit = TEMP_FAHRENHEIT
         self._attr_unique_id = f"{DOMAIN}_{device_id}_channel_{channel_id}"
-        self._attr_device_class = SensorDeviceClass.TEMPERATURE
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = TEMP_FAHRENHEIT
-        
-        # Set device info
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device_id)},
-            name=device_name,
-            manufacturer="Fireboard Labs",
-            model=model,
-        )
-        
-        self._attr_extra_state_attributes = {
-            ATTR_DEVICE_ID: device_id,
-            ATTR_CHANNEL: channel_number,
+        self._attr_name = f"{device_name} {channel_name}"
+        self._attr_device_class = DEVICE_CLASS_TEMPERATURE
+        self._attributes = {
+            "device_id": device_id,
+            "device_name": device_name,
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "channel_number": channel_number,
+            "last_updated": datetime.now().isoformat(),
         }
 
     @property
-    def native_value(self) -> Optional[float]:
-        """Return the temperature value."""
-        if not self.coordinator.data:
-            return None
-            
-        # Find the device in coordinator data
-        for device in self.coordinator.data:
-            if str(device.get("id")) == str(self._device_id):
-                # Check if device has temperature data
-                if "temps" not in device:
-                    return None
-                    
-                # Find the matching channel temperature
-                for temp in device["temps"]:
-                    if str(temp.get("channel")) == str(self._channel_number):
-                        # Update last updated attribute
-                        self._attr_extra_state_attributes[ATTR_LAST_UPDATED] = temp.get("time")
-                        return float(temp.get("temp"))
-                        
-        return None
+    def name(self):
+        """Return the name of the sensor."""
+        return self._attr_name
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        # Default method calls async_write_ha_state()
-        super()._handle_coordinator_update()
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        # Find the current device and channel in coordinator data
+        if self.coordinator.data and "devices" in self.coordinator.data:
+            devices = self.coordinator.data["devices"]
+            for device in devices:
+                if str(device.get("id")) == str(self._device_id):
+                    for channel in device.get("channels", []):
+                        if str(channel.get("id")) == str(self._channel_id):
+                            self._state = channel.get("temp")
+                            # Update channel attributes
+                            for key, value in channel.items():
+                                if isinstance(value, (str, int, float, bool)):
+                                    self._attributes[key] = value
+                            # Update last_updated attribute
+                            self._attributes["last_updated"] = datetime.now().isoformat()
+                            break
         
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        
-    async def async_will_remove_from_hass(self) -> None:
-        """When entity will be removed from hass."""
-        await super().async_will_remove_from_hass()
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return self._unit
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes."""
+        return self._attributes
+
+    async def async_update(self):
+        """Update the sensor."""
+        await self.coordinator.async_request_refresh()

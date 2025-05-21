@@ -42,10 +42,9 @@ This integration connects your Fireboard 2 temperature sensors to Home Assistant
 1. Go to Settings > Devices & Services.
 2. Click "Add Integration" and search for "Fireboard".
 3. Enter your Fireboard account credentials:
-   - Username (required)
-   - Password (required)
-   - API key (optional)
-4. Set the update interval (default: 60 seconds).
+   - Username (your email address)
+   - Password
+4. Set the update interval (default: 60 seconds) in the options.
 5. Click Submit to complete the setup.
 
 ## Available Entities
@@ -157,9 +156,9 @@ If you experience issues with the integration:
 
 2. Check the Home Assistant logs for error messages related to the Fireboard integration.
 
-3. Verify your Fireboard account credentials are correct and that you can log in to the Fireboard Cloud website.
+3. Verify your Fireboard account credentials are correct and that you can log in to the Fireboard Cloud website (https://fireboard.io/).
 
-4. If you receive API connection errors, try using your Fireboard API key instead of username/password authentication.
+4. Make sure you're using your email address as the username when configuring the integration.
 
 5. If problems persist, open an issue on GitHub with your logs and details about your setup.
 

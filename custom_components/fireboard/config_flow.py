@@ -1,21 +1,69 @@
 """Config flow for Fireboard integration."""
 import logging
+from typing import Any, Dict, Optional
+
 import voluptuous as vol
-
 from homeassistant import config_entries
-from homeassistant.const import CONF_API_KEY, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import email_validator
 
+from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
 from .api import FireboardApiClient
-from .const import DOMAIN, CONF_API_URL, DEFAULT_API_URL
 
 _LOGGER = logging.getLogger(__name__)
+
+DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required("username"): str,
+        vol.Required("password"): str,
+    }
+)
+
+
+async def validate_input(hass: HomeAssistant, data: dict) -> dict:
+    """Validate the user input allows us to connect."""
+    username = data["username"]
+    password = data["password"]
+    
+    # Validate that username is an email address
+    try:
+        valid = email_validator.validate_email(username)
+        username = valid.email  # Normalized email
+    except email_validator.EmailNotValidError:
+        raise InvalidAuth("Username must be a valid email address")
+
+    # Try to authenticate with Fireboard
+    session = async_get_clientsession(hass)
+    client = FireboardApiClient(hass, username=username, password=password, session=session)
+    
+    if not await client.authenticate():
+        raise InvalidAuth("Invalid username or password")
+    
+    # Get user profile to verify connection
+    profile = await client.get_user_profile()
+    if not profile:
+        raise CannotConnect("Unable to retrieve user profile")
+        
+    # Try to get devices
+    devices = await client.get_devices()
+    device_count = len(devices) if devices else 0
+    
+    # Return info to store in the config entry
+    return {
+        "title": f"Fireboard ({username})",
+        "username": username,
+        "password": password,
+        "user_id": profile.get("id", "")
+    }
 
 
 class FireboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Fireboard."""
 
     VERSION = 1
+    CONNECTION_CLASS = config_entries.CONN_CLASS_CLOUD_POLL
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
@@ -23,43 +71,56 @@ class FireboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                api_url = user_input.get(CONF_API_URL, DEFAULT_API_URL)
-                api_key = user_input.get(CONF_API_KEY)
-                username = user_input.get(CONF_USERNAME)
-                password = user_input.get(CONF_PASSWORD)
-
-                session = async_get_clientsession(self.hass)
-                client = FireboardApiClient(session, api_url, api_key, username, password)
-
-                # Check authentication
-                if not api_key and (not username or not password):
-                    errors["base"] = "invalid_auth"
-                else:
-                    # Test connection
-                    devices = await client.async_get_devices()
-                    if devices is None:
-                        errors["base"] = "cannot_connect"
-                    else:
-                        # Success - create entry
-                        return self.async_create_entry(
-                            title=f"Fireboard ({len(devices)} devices)",
-                            data=user_input
-                        )
-
-            except Exception:
-                _LOGGER.exception("Unexpected error during Fireboard setup")
+                info = await validate_input(self.hass, user_input)
+                return self.async_create_entry(title=info["title"], data=info)
+            except CannotConnect as e:
+                _LOGGER.error(f"Cannot connect: {e}")
+                errors["base"] = "cannot_connect"
+            except InvalidAuth as e:
+                _LOGGER.error(f"Invalid auth: {e}")
+                errors["base"] = "invalid_auth"
+            except Exception as e:  # pylint: disable=broad-except
+                _LOGGER.exception(f"Unexpected exception: {e}")
                 errors["base"] = "unknown"
 
-        # Show form
-        data_schema = vol.Schema({
-            vol.Required(CONF_API_URL, default=DEFAULT_API_URL): str,
-            vol.Required(CONF_USERNAME): str,
-            vol.Required(CONF_PASSWORD): str,
-            vol.Optional(CONF_API_KEY): str,
-        })
-
         return self.async_show_form(
-            step_id="user",
-            data_schema=data_schema,
-            errors=errors
+            step_id="user", data_schema=DATA_SCHEMA, errors=errors
         )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle a option flow for Fireboard."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        """Handle options flow."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        options = {
+            vol.Optional(
+                "scan_interval",
+                default=self.config_entry.options.get(
+                    "scan_interval", DEFAULT_SCAN_INTERVAL
+                ),
+            ): vol.All(vol.Coerce(int), vol.Range(min=30, max=300))
+        }
+
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(options))
+
+
+class CannotConnect(HomeAssistantError):
+    """Error to indicate we cannot connect."""
+
+
+class InvalidAuth(HomeAssistantError):
+    """Error to indicate authentication failed."""
