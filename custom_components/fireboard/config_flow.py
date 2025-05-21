@@ -47,7 +47,7 @@ async def validate_input(hass: HomeAssistant, data: dict):
     }
 
 
-class FireboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class ConfigFlow(config_entries.ConfigFlow):
     """Handle a config flow for Fireboard."""
 
     VERSION = 1

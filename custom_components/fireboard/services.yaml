@@ -1,0 +1,35 @@
+create_alert:
+  description: Create a new temperature alert for a Fireboard device
+  fields:
+    device_id:
+      description: The Fireboard device ID
+      example: "12345"
+      required: true
+    channel_id:
+      description: The channel ID to monitor
+      example: "6789"
+      required: true
+    min_temp:
+      description: Minimum temperature threshold in °F (optional)
+      example: 150
+      required: false
+    max_temp:
+      description: Maximum temperature threshold in °F (optional)
+      example: 225
+      required: false
+
+delete_alert:
+  description: Delete a temperature alert
+  fields:
+    alert_id:
+      description: The ID of the alert to delete
+      example: "1234"
+      required: true
+
+refresh_data:
+  description: Force a refresh of Fireboard device data
+  fields:
+    device_id:
+      description: The Fireboard device ID (optional, refresh all devices if not specified)
+      example: "12345"
+      required: false
