@@ -451,7 +451,7 @@ class FireboardTemperatureSensor(CoordinatorEntity, SensorEntity):
         self._state = None
         self._unit = UnitOfTemperature.FAHRENHEIT
         self._attr_unique_id = f"{DOMAIN}_{device_id}_channel_{channel_id}"
-        self._attr_name = f"{device_name} {channel_name}"
+        self._attr_name = f"Fireboard {device_name} {channel_name}"
         self._attr_device_class = SensorDeviceClass.TEMPERATURE
         self._attributes = {
             "device_id": device_id,
