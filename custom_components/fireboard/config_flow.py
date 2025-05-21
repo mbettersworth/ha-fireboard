@@ -1,5 +1,6 @@
 """Config flow for Fireboard integration."""
 import logging
+import re
 from typing import Any, Dict, Optional
 
 import voluptuous as vol
@@ -7,12 +8,14 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-import email_validator
 
 from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
 from .api import FireboardApiClient
 
 _LOGGER = logging.getLogger(__name__)
+
+# Simple email validation regex - not perfect but avoids blocking calls
+EMAIL_REGEX = re.compile(r"[^@]+@[^@]+\.[^@]+")
 
 DATA_SCHEMA = vol.Schema(
     {
@@ -27,28 +30,38 @@ async def validate_input(hass: HomeAssistant, data: dict) -> dict:
     username = data["username"]
     password = data["password"]
     
-    # Validate that username is an email address
-    try:
-        valid = email_validator.validate_email(username)
-        username = valid.email  # Normalized email
-    except email_validator.EmailNotValidError:
+    # Validate that username looks like an email address
+    # Using simple regex to avoid blocking calls from email_validator library
+    if not EMAIL_REGEX.match(username):
         raise InvalidAuth("Username must be a valid email address")
 
     # Try to authenticate with Fireboard
     session = async_get_clientsession(hass)
     client = FireboardApiClient(hass, username=username, password=password, session=session)
     
+    _LOGGER.debug(f"Authenticating with Fireboard API using username: {username}")
     if not await client.authenticate():
+        _LOGGER.error(f"Authentication failed for user: {username}")
         raise InvalidAuth("Invalid username or password")
     
     # Get user profile to verify connection
+    _LOGGER.debug("Getting user profile to verify connection")
     profile = await client.get_user_profile()
     if not profile:
+        _LOGGER.error("Unable to retrieve user profile")
         raise CannotConnect("Unable to retrieve user profile")
-        
-    # Try to get devices
+    
+    _LOGGER.debug(f"Successfully retrieved user profile, ID: {profile.get('id')}")
+    
+    # Try to get devices - we continue even if no devices found
+    _LOGGER.debug("Attempting to retrieve devices")
     devices = await client.get_devices()
     device_count = len(devices) if devices else 0
+    
+    if device_count > 0:
+        _LOGGER.info(f"Found {device_count} devices")
+    else:
+        _LOGGER.warning("No devices found, but authentication was successful")
     
     # Return info to store in the config entry
     return {
